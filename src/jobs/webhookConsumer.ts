@@ -2,7 +2,7 @@
  * Consumes WEBHOOKS queue: deliver outbound webhooks with HMAC-SHA256 signature and retries.
  */
 import type { ConsumeMessage } from "amqplib";
-import { connectRabbitMQ, QUEUES } from "../config/rabbitmq";
+import { connectRabbitMQ, QUEUES, assertQueueWithDLQ } from "../config/rabbitmq";
 import { logger } from "../config/logger";
 import { deliverWebhook } from "../services/webhook";
 
@@ -15,15 +15,8 @@ const MAX_RETRIES = 5;
 export async function startWebhookConsumer(): Promise<void> {
   const ch = await connectRabbitMQ();
 
-  // Main queue
-  await ch.assertQueue(QUEUES.WEBHOOKS, {
-    durable: true,
-  });
-
-  // Dead-letter queue
-  await ch.assertQueue(QUEUES.WEBHOOKS_DLQ, {
-    durable: true,
-  });
+  // Main queue (bound to DLX so nack'd messages route to WEBHOOKS_DLQ)
+  await assertQueueWithDLQ(QUEUES.WEBHOOKS);
 
   ch.prefetch(1);
 

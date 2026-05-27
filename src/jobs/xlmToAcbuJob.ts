@@ -4,7 +4,7 @@
  * Consumes XLM_TO_ACBU queue or polls OnRampSwap table for pending_convert.
  */
 import type { ConsumeMessage } from "amqplib";
-import { connectRabbitMQ, QUEUES } from "../config/rabbitmq";
+import { connectRabbitMQ, QUEUES, assertQueueWithDLQ } from "../config/rabbitmq";
 import { logger, logFinancialEvent } from "../config/logger";
 import { prisma } from "../config/database";
 import { mintFromUsdcInternal } from "../controllers/mintController";
@@ -12,6 +12,7 @@ import { fetchXlmRateUsd } from "../services/oracle/cryptoClient";
 import { randomUUID } from "crypto";
 
 const QUEUE = QUEUES.XLM_TO_ACBU;
+const MAX_RETRIES = 3;
 
 export interface XlmToAcbuPayload {
   onRampSwapId: string;
@@ -23,20 +24,30 @@ export interface XlmToAcbuPayload {
 
 export async function startXlmToAcbuConsumer(): Promise<void> {
   const ch = await connectRabbitMQ();
-  await ch.assertQueue(QUEUE, { durable: true });
+  await assertQueueWithDLQ(QUEUE);
   ch.prefetch(1);
   ch.consume(
     QUEUE,
     async (msg: ConsumeMessage | null) => {
       if (!msg) return;
+      const headers = msg.properties.headers ?? {};
+      const retries = typeof headers["x-retries"] === "number" ? headers["x-retries"] : 0;
       try {
         const body = JSON.parse(msg.content.toString()) as XlmToAcbuPayload;
         const correlationId = randomUUID();
         await processXlmToAcbu(body, correlationId);
         ch.ack(msg);
       } catch (e) {
-        logger.error("XLM→ACBU job failed", { error: e });
-        ch.nack(msg, false, true);
+        logger.error("XLM→ACBU job failed", { error: e, retries });
+        if (retries >= MAX_RETRIES) {
+          ch.nack(msg, false, false);
+          return;
+        }
+        ch.sendToQueue(QUEUE, msg.content, {
+          persistent: true,
+          headers: { ...headers, "x-retries": retries + 1 },
+        });
+        ch.ack(msg);
       }
     },
     { noAck: false },
@@ -147,7 +158,7 @@ export async function enqueueXlmToAcbu(
   payload: XlmToAcbuPayload,
 ): Promise<void> {
   const ch = await connectRabbitMQ();
-  await ch.assertQueue(QUEUE, { durable: true });
+  await assertQueueWithDLQ(QUEUE);
   ch.sendToQueue(QUEUE, Buffer.from(JSON.stringify(payload)), {
     persistent: true,
   });

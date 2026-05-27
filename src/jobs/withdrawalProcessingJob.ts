@@ -219,13 +219,13 @@ export async function startWithdrawalProcessingConsumer(): Promise<void> {
             currency,
             amount,
           );
-          ch.nack(msg, false, true);
+          ch.nack(msg, false, false);
           return;
         }
         ch.ack(msg);
       } catch (e) {
         logger.error("Withdrawal job failed", { error: e });
-        ch.nack(msg, false, true);
+        ch.nack(msg, false, false);
       }
     },
     { noAck: false },
