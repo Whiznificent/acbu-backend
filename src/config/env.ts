@@ -137,16 +137,13 @@ if (!parsed.success) {
 }
 
 const isJestTest =
-  typeof (globalThis as any).jest !== "undefined" ||
-  process.env.JEST_WORKER_ID !== undefined;
+  typeof (globalThis as any).jest !== "undefined" || process.env.JEST_WORKER_ID !== undefined;
 
 if (
   parsed.data.WEBHOOK_SIGNATURE_BYPASS !== undefined &&
   !["development", "test"].includes(parsed.data.NODE_ENV)
 ) {
-  throw new Error(
-    "WEBHOOK_SIGNATURE_BYPASS must be unset in staging and production environments",
-  );
+  throw new Error("WEBHOOK_SIGNATURE_BYPASS must be unset in staging and production environments");
 }
 
 if (parsed.data.NODE_ENV === "production" && !isJestTest && !parsed.data.PRISMA_ACCELERATE_URL) {
@@ -191,9 +188,23 @@ if (parsed.data.NODE_ENV === "production" && !isJestTest && !parsed.data.USDC_IS
   throw new Error("Missing required environment variable: USDC_ISSUER_MAINNET");
 }
 
+// AB-024: PII_ENCRYPTION_KEY must be set in production. Without it, sensitive
+// fields (KYC payloads, Stellar secret material) would be stored in plaintext,
+// violating the encryption-at-rest requirement.
+if (parsed.data.NODE_ENV === "production" && !isJestTest && !parsed.data.PII_ENCRYPTION_KEY) {
+  throw new Error(
+    "Missing required environment variable: PII_ENCRYPTION_KEY (must be a 64-character hex string). " +
+      "Generate one with: node -e \"console.log(require('crypto').randomBytes(32).toString('hex'))\"",
+  );
+}
+
 const s3ScanWebhookSecret = process.env.S3_SCAN_WEBHOOK_SECRET?.trim() || "change-me-in-production";
 
-if (parsed.data.NODE_ENV === "production" && !isJestTest && s3ScanWebhookSecret === "change-me-in-production") {
+if (
+  parsed.data.NODE_ENV === "production" &&
+  !isJestTest &&
+  s3ScanWebhookSecret === "change-me-in-production"
+) {
   throw new Error("Missing required environment variable: S3_SCAN_WEBHOOK_SECRET");
 }
 // #382: Fintech partner keys must never be absent in production — an empty
